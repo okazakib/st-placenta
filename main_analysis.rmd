@@ -168,6 +168,12 @@ seu.subset.1 <- seu.subset.mt[intersect(rownames(seu.subset.mt), sex_genes), ]
 cat("Number of genes removed : ", nrow(seu.subset.mt) - nrow(seu.subset.1), "\n")
 ```
 
+```{r}
+#Save the filtered seurat object
+saveRDS(seu.subset.1, file = file.path(DIR_RES, "st_placenta_seurat.rds"))
+```
+
+
 ##SCTransform
 
 Performing scaling of data and normalization.
