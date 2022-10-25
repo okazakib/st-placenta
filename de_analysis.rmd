@@ -1,0 +1,291 @@
+---
+title: "Processing and analysis of placenta ST data: DE analysis"
+author: "Nayanika Bhalla"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+  html_document:
+    theme: cosmo
+    highlight: tango
+    css: style.css
+    code_folding: "hide"
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+    number_sections: false
+---
+
+Aim of the script:
+
+Data processing and analysis of spatial transcriptomics (second generation) data from 12 tissue sections. 
+
+Description:
+
+
+#Initialise
+
+```{r set_up}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE, cache = FALSE, cache.lazy = FALSE, opts.label="kill_prefix")
+
+DIR_ROOT <- setwd("~/Desktop/placenta_project/210728_updated_data/")
+DIR_DATA <- file.path(DIR_ROOT, 'count_data')
+DIR_RES <- file.path(DIR_ROOT, 'results')
+DIR_SPOT <- file.path(DIR_ROOT, 'spot_data')
+DIR_IMGS <- file.path(DIR_ROOT, 'imgs_size30')
+DIR_FIG <- file.path(DIR_RES, 'figures')
+
+#' Read packages
+library(STutility)
+library(cowplot)
+library(dbplyr)
+library(dplyr)
+library(DoMultiBarHeatmap)
+library(ReactomePA)
+library(randomcoloR)
+library(RColorBrewer)
+library(pheatmap)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+library(ReactomePA)
+library(clusterProfiler)
+library(enrichplot)
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+Colours
+
+```{r}
+cols_main <- c("#fb8072", "#80b1d3","#ffb6c1")
+
+cols_pink_tints <- c(cols_main[1], "#CD678E", "#D27699", "#D785A4", "#DC94B0", "#E1A3BB", "#E6B3C6", "#EBC2D1", "#F0D1DD")
+cols_pink_tints2 <- c(cols_main[1], "#B75078", "#A5496C", "#934160", "#803954", "#6E3048", "#5C283C", "#4A2030", "#371824")
+cols_pink_tints3 <- c(rev(cols_pink_tints), cols_pink_tints2[-1])
+cols_cyan_tints <- c(cols_main[2], "#6DC4D9", "#9DD7E5")
+cols_grey <- "#494F51"
+cols_cats <- c(cols_main[2], cols_cyan_tints[3], cols_main[1], cols_pink_tints[5], "#F0C987", "#aaba82", "#AD7A99", "#bca9b5", "#83A4AA", "#b0c5c9", "#7b6599", "#9396b8", "#DFA06E", "#df716e", "#6E8894", cols_grey) 
+cols_hm <- RColorBrewer::brewer.pal(name = "YlOrRd", n = 9)
+```
+
+#Load Seurat object
+
+```{r}
+seu <- readRDS(file=file.path(file.path(DIR_RES, "st_placenta_seurat.rds")))
+```
+
+#Filtering
+
+```{r}
+genes_type_keep <- ensids[ensids$gene_biotype %in% "protein_coding",]
+
+seu_protein <- SubsetSTData(seu, features = genes_type_keep$gene_name)
+```
+
+#DESeq2
+
+```{r}
+umis <- GetAssayData(seu_protein, slot = "counts", assay = "RNA")
+
+aggregated_exprMat <- do.call(cbind, lapply(unique(seu_protein$sample_id),
+                                            function(i){
+                                              rowSums(umis[,seu_protein$sample_id %in% i, drop=F])
+                                            }))
+
+colnames(aggregated_exprMat) <- unique(seu_protein$sample_id)
+
+dim(aggregated_exprMat)
+```
+
+```{r}
+cols_keep <- c("pair", "tissue", "condition", "child_gender", "sample_id", "chip_id")
+
+de_des_pe <- jsm[,cols_keep]
+rownames(de_des_pe) <- rownames(jsm)
+
+de_des_pe
+```
+
+```{r}
+
+#design_m <- collapseReplicates(aggregated_exprMat,groupby=de_des_pe$tissue)
+dds_pe_s <- DESeqDataSetFromMatrix(countData = aggregated_exprMat,
+                                   colData = de_des_pe,
+                                   design = ~condition)
+
+dds_pe_s <- DESeq(dds_pe_s)
+res_pe_s <- results(dds_pe_s)
+res_pe_s_df <- as.data.frame(res_pe_s)
+
+
+head(res_pe_s_df, n=20)
+```
+
+```{r}
+dds_pe_coll <- collapseReplicates(dds_pe_s, dds_pe_s$tissue)
+
+res_pe_s_coll <- results(dds_pe_coll)
+res_pe_s_coll_df <- as.data.frame(res_pe_s_coll)
+
+head(res_pe_s_coll_df[order(res_pe_s_coll_df$padj),], n=15)
+
+res_pe_s_coll_df <- res_pe_s_coll_df %>% arrange(padj) 
+
+openxlsx::write.xlsx(res_pe_s_coll_df, file = file.path(DIR_RES, "220531_pseudobulk_deseq2_condition_protein_coding.xlsx"), rowNames=T)
+```
+
+```{r}
+## Order results by padj values
+
+res_pe_s_coll_df$gene <- row.names(res_pe_s_coll_df)
+
+top20_sigOE_genes <- res_pe_s_coll_df %>% 
+        arrange(padj) %>% 	#Arrange rows by padj values
+        pull(gene) %>% 		#Extract character vector of ordered genes
+        head(n=20) 		#Extract the first 20 genes
+
+normalized_counts <- counts(dds_pe_coll, normalized=T) %>% 
+                     data.frame() %>%
+                     rownames_to_column(var="gene") 
+
+top20_sigOE_norm <- normalized_counts %>%
+        filter(gene %in% top20_sigOE_genes)
+
+
+top40_sigOE_genes <- res_pe_s_coll_df %>% 
+        arrange(padj) %>% 	#Arrange rows by padj values
+        pull(gene) %>% 		#Extract character vector of ordered genes
+        head(n=40) 		#Extract the first 20 genes
+
+top40_sigOE_norm <- normalized_counts %>%
+        filter(gene %in% top40_sigOE_genes)
+```
+
+```{r}
+# Gathering the columns to have normalized counts to a single column
+gathered_top20_sigOE <- top20_sigOE_norm %>%
+  gather(colnames(top20_sigOE_norm)[2:7], key = "tissue", value = "normalized_counts")
+
+gathered_top20_sigOE$condition <- jsm$condition[match(gathered_top20_sigOE$tissue, jsm$tissue)]
+## check the column header in the "gathered" data frame
+head(gathered_top20_sigOE)
+
+
+# Gathering the columns to have normalized counts to a single column
+gathered_top40_sigOE <- top40_sigOE_norm %>%
+  gather(colnames(top40_sigOE_norm)[2:7], key = "tissue", value = "normalized_counts")
+
+gathered_top40_sigOE$condition <- jsm$condition[match(gathered_top40_sigOE$tissue, jsm$tissue)]
+## check the column header in the "gathered" data frame
+head(gathered_top40_sigOE)
+```
+
+```{r}
+upgenes_plot <- subset(res_pe_s_coll_df, log2FoldChange>0 & padj<0.01) %>%
+  dplyr::arrange(desc(log2FoldChange)) %>%
+  dplyr::top_n(n = 10, wt = log2FoldChange)
+
+downgenes_plot <- subset(res_pe_s_coll_df, log2FoldChange<0 & padj<0.01) %>%
+  dplyr::arrange(log2FoldChange) %>%
+  dplyr::top_n(n = 10, wt = -log2FoldChange)
+
+genes_plot <- c(upgenes_plot$gene, downgenes_plot$gene)
+
+normalized_counts_t <- as.data.frame(t(normalized_counts), header=T, stringsAsFactors = FALSE)
+colnames(normalized_counts_t) <- normalized_counts_t[1,]
+normalized_counts_t <- normalized_counts_t[-1, ] 
+normalized_counts_t$tissue <- rownames(normalized_counts_t)
+
+metadata <- jsm
+bulk_df_plot_norm <- merge(normalized_counts_t, metadata, by="tissue")
+
+bulk_df_plot_long <- gather(bulk_df_plot[,c(genes_plot, "sample_id", "tissue", "condition")], 
+                            gene, 
+                            expression, 
+                            genes_plot[1]:genes_plot[length(genes_plot)], 
+                            factor_key=TRUE)
+
+bulk_df_plot_long_norm <- gather(bulk_df_plot_norm[,c(genes_plot, "tissue", "condition")], 
+                            gene, 
+                            expression, 
+                            genes_plot[1]:genes_plot[length(genes_plot)], 
+                            factor_key=TRUE)
+
+
+bulk_df_plot_long_sum <- bulk_df_plot_long_norm %>%
+  dplyr::group_by(tissue, gene, condition) %>% distinct()
+
+bulk_df_plot_long_sum$direction <- "up-regulated"
+
+bulk_df_plot_long_sum[bulk_df_plot_long_sum$gene%in%downgenes_plot$gene,"direction"] <- "down-regulated"
+
+bulk_df_plot_long_sum$expression <- as.double(bulk_df_plot_long_sum$expression)
+
+p_genes <- ggplot(bulk_df_plot_long_sum, aes(x=reorder(gene, -expression), y=expression, color=condition, shape=condition)) +
+  geom_point() +
+  facet_grid(~direction, scales="free_x") +
+  scale_y_log10() +
+  scale_color_manual(values=rev(cols_main[1:2])) +
+  labs(x="",y="summed counts(log10)") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        strip.background = element_rect(fill = NA, color = NA),
+        legend.position = "none", 
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  custom_theme;p_genes
+
+pdf(file = file.path(DIR_FIG, "220816_Fig2_DE_genes.pdf"), width = 6, height = 4, useDingbats = F);p_genes;dev.off()
+```
+
+##Volcano plot
+
+```{r}
+ de_res_filt <- subset(res_pe_s_coll_df, abs(log2FoldChange)>0.01 & padj<0.9)
+de_res_filt <- de_res_filt[!is.na(de_res_filt$padj),]
+
+# max(abs(de_res_filt$log2FoldChange))
+de_res_filt$adj.pvalue <- "lt 0.01"
+de_res_filt[de_res_filt$padj<0.01, "adj.pvalue"] <- "st 0.01"
+
+
+genes_label <- de_res_filt[de_res_filt$padj<0.0001 & abs(de_res_filt$log2FoldChange)>1.5,]$gene
+# genes_label <- genes_label[-grep(pattern = "^RP|^AC[0-9]", x = genes_label)]
+de_res_filt$label <- ""
+de_res_filt[de_res_filt$gene%in%genes_label, "label"] <- genes_label
+genes_label_df <- de_res_filt[de_res_filt$gene%in%genes_label, ]
+
+```
+
+```{r}
+# max(abs(de_res_filt$log2FoldChange))
+p_vulcano <- ggplot(de_res_filt, aes(x=log2FoldChange, 
+                                     y=-log10(padj), 
+                                     color=adj.pvalue, 
+                                     label = label)) +
+  geom_point() +
+  # geom_text_repel(
+  #   # nudge_y = 6, 
+  #   box.padding = 1,
+  #   point.padding = 0.5,
+  #   color =  "black",
+  #   segment.color = "black") +
+  scale_color_manual(values = c("grey30", "#F0C987")) +
+  xlim(-8.6,8.6) +
+  labs(y="-log10(adj. p-value)") +
+  theme_bw() +
+  theme(legend.position = "top",
+        panel.grid = element_blank()
+        # legend.position=c(0.15,.85)
+        ) +
+  custom_theme;p_vulcano
+
+p_vulcano2 <- p_vulcano +   
+  geom_text_repel(
+    # nudge_y = 6,
+    max.overlaps = 20, # Inf
+    box.padding = 1,
+    point.padding = 0.1,
+    color =  "black", fontface = "italic",
+    segment.color = "black");p_vulcano2
+```
