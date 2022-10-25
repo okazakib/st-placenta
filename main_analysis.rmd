@@ -1,0 +1,292 @@
+---
+title: "Processing and analysis of placenta ST data"
+author: "Nayanika Bhalla"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+  html_document:
+    theme: cosmo
+    highlight: tango
+    css: style.css
+    code_folding: "hide"
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+    number_sections: false
+---
+
+Aim of the script:
+
+Data processing and analysis of spatial transcriptomics (second generation) data from 12 tissue sections. 
+
+Description:
+
+
+#Initialise
+
+```{r set_up}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE, cache = FALSE, cache.lazy = FALSE, opts.label="kill_prefix")
+
+DIR_ROOT <- setwd("~/Desktop/placenta_project/210728_updated_data/")
+DIR_DATA <- file.path(DIR_ROOT, 'count_data')
+DIR_RES <- file.path(DIR_ROOT, 'results')
+DIR_SPOT <- file.path(DIR_ROOT, 'spot_data')
+DIR_IMGS <- file.path(DIR_ROOT, 'imgs_size30')
+DIR_FIG <- file.path(DIR_RES, 'figures')
+
+#' Read packages
+library(STutility)
+library(cowplot)
+library(dbplyr)
+library(dplyr)
+library(DoMultiBarHeatmap)
+library(ReactomePA)
+library(randomcoloR)
+library(RColorBrewer)
+library(pheatmap)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+library(ReactomePA)
+library(clusterProfiler)
+library(enrichplot)
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+Colours
+
+```{r}
+cols_main <- c("#fb8072", "#80b1d3","#ffb6c1")
+
+cols_pink_tints <- c(cols_main[1], "#CD678E", "#D27699", "#D785A4", "#DC94B0", "#E1A3BB", "#E6B3C6", "#EBC2D1", "#F0D1DD")
+cols_pink_tints2 <- c(cols_main[1], "#B75078", "#A5496C", "#934160", "#803954", "#6E3048", "#5C283C", "#4A2030", "#371824")
+cols_pink_tints3 <- c(rev(cols_pink_tints), cols_pink_tints2[-1])
+cols_cyan_tints <- c(cols_main[2], "#6DC4D9", "#9DD7E5")
+cols_grey <- "#494F51"
+cols_cats <- c(cols_main[2], cols_cyan_tints[3], cols_main[1], cols_pink_tints[5], "#F0C987", "#aaba82", "#AD7A99", "#bca9b5", "#83A4AA", "#b0c5c9", "#7b6599", "#9396b8", "#DFA06E", "#df716e", "#6E8894", cols_grey) 
+cols_hm <- RColorBrewer::brewer.pal(name = "YlOrRd", n = 9)
+```
+
+#Create the infotable
+
+Make a list of all the files with a specific prefix and then join them to make the infotable.
+
+```{r}
+
+#Read the metatable file
+
+
+jsm <- read.table(file="~/Desktop/Placenta_stutility/joint_sample_metadata.txt", header = T, row.names = 2, sep="\t")
+
+
+#Create the lists of paths to all the relevant files for the infotable
+
+samples <- list.files(path = file.path(DIR_DATA), pattern = 'data.tsv', full.names = T, recursive = T)
+
+imgs <- list.files(path = file.path(DIR_IMGS), pattern = '.jpg', full.names = T, recursive = T)
+
+spotfiles <- list.files(path = file.path(DIR_SPOT), pattern = 'spot_data-all', full.names = T, recursive = T)
+
+#Create the infotable by combining the lists of files created above.
+infoTable <- data.frame(samples, 
+                        imgs,
+                        spotfiles, 
+                        sample_ids = row.names(jsm),
+                        condition = jsm[ ,5],
+                        pair = jsm[ ,3],
+                        tissue = jsm[ ,4],
+                        child_gender = jsm[ ,14],
+                        exp_id = c(replicate(8,"ST1_2019-03-25"), replicate(4,"ST2_2019-08-12")),
+                        stringsAsFactors = F)
+
+```
+
+##Load data and convert from EnsembleIDs to gene symbols
+
+The provided count matrices uses EnsembleIDs (with version id) for the gene symbols. Gene symbols are often a preference for easier reading, and we have therefore included an option to directly convert the gene IDs when creating the Seurat object. The data.frame object required for conversion should have one column called “gene_id” matching the original gene IDs and a column called “gene_name” with the desired symbols.
+
+```{r}
+#Transformation table for geneIDs
+ensids <- read.table("~/Desktop/Placenta_stutility/genes_chr.tsv", header = T, sep = "\t", stringsAsFactors = F)
+
+```
+
+We put some very weak filtering thresholds while creating the seurat object. Genes that are exressed in fewer than 5 spots were removed as well as spots with fewer that 200 UMIs.
+
+```{r echo=TRUE, include=FALSE}
+seu.original <- InputFromTable(infotable = infoTable, 
+                     annotation = ensids, 
+                     platform = "2k",
+                     min.gene.spots = 5,
+                     min.spot.count = 100,
+                     min.gene.count=20)
+```
+
+```{r}
+#Create a list of mitochondrial and ribsosomal genes
+
+seu.ex <- seu.original
+
+
+mt.genes <- grep(pattern = "^MT-", x = rownames(seu.ex), value = TRUE)
+
+seu.ex$percent.mito <- (Matrix::colSums(seu.ex@assays$RNA@counts[mt.genes,])/Matrix::colSums(seu.ex@assays$RNA@counts))*100
+
+rp.genes <- grep(pattern = "^RPL|^RPS", x = rownames(seu.ex), value = TRUE)
+
+seu.ex$percent.ribo <- (Matrix::colSums(seu.ex@assays$RNA@counts[rp.genes,])/Matrix::colSums(seu.ex@assays$RNA@counts))*100
+
+#Plot the information in a spatial manner based on the images
+ST.FeaturePlot(seu.ex, features = "percent.mito", dark.theme = F, cols = c('#ffffcc','#a1dab4','#41b6c4','#2c7fb8','#253494'),ncol = 4)
+
+ST.FeaturePlot(seu.ex, features = "percent.ribo", dark.theme = F, cols = c('#ffffcc','#a1dab4','#41b6c4','#2c7fb8','#253494'), ncol = 4)
+
+#Remove mitochondrial and ribsomal genes 
+keep_genes <- subset(ensids, gene_biotype %!in% c("rRNA","Mt_tRNA","Mt_rRNA"))$gene_name
+                     
+seu.subset<-seu.ex[intersect(rownames(seu.ex), keep_genes), ]
+
+
+cat("Number of genes removed : ", nrow(seu.ex) - nrow(seu.subset), "\n")
+```
+```{r}
+#Remove mitochondrial and ribsomal genes 
+keep_genes_mt <- subset(ensids, chromosome_name %!in% c("chrMT"))$gene_name
+                     
+seu.subset.mt<-seu.subset[intersect(rownames(seu.subset), keep_genes_mt), ]
+
+
+cat("Number of genes removed : ", nrow(seu.subset) - nrow(seu.subset.mt), "\n")
+```
+
+```{r}
+sex_genes <- subset(ensids, chromosome_name %!in% c("chrY","chrX"))$gene_name
+
+seu.subset.1 <- seu.subset.mt[intersect(rownames(seu.subset.mt), sex_genes), ]
+
+cat("Number of genes removed : ", nrow(seu.subset.mt) - nrow(seu.subset.1), "\n")
+```
+
+##SCTransform
+
+Performing scaling of data and normalization.
+
+As established in the analysis before, it was best to regress based on the experiment ID as it presented some variation. This would allow for batch correction. 
+
+```{r include=FALSE}
+
+seu <- SCTransform(object = seu.subset.1, 
+                        vars.to.regress = "exp_id",
+                        verbose = F)
+```
+
+##Run ICA
+
+Performed ICA dimensionality reduction. 
+
+```{r include=FALSE}
+seu <- RunICA(object = seu)
+```
+
+##t-SNE and UMAP
+
+```{r include=FALSE}
+perplex = 30
+dims_use = c(1:4, 6, 8, 10:12) #seq(1, 18)[-c(1,6,8,10,13,14)]  #1:10  # c(1:4, 6:10, 12:18)
+red_use <- "ica"
+
+#Also run TSNE and UMAP 
+set.seed(2)
+seu<- RunTSNE(object = seu, reduction = red_use, dims = dims_use, perplexity = perplex)
+seu <- RunUMAP(object = seu, reduction = red_use, dims = dims_use, n.neighbors = perplex, min.dist = 0.3)
+```
+
+##Clustering
+
+```{r include=FALSE}
+#Define specific cluster resolution 
+
+cluster_res <- c(seq(0.1, 0.7, by = 0.2))
+for (res in cluster_res) {
+  print(paste("Resolution =", res))
+  seu <- FindClusters(object = seu, resolution = res)
+}
+```
+
+```{r include=FALSE}
+#Create a list that contains all information about all teh clustering performed.
+all_dim <- data.frame(seu@meta.data[, c( "sample_ids", "pair", "condition", "nFeature_RNA", "nCount_RNA")], 
+                     seu@reductions$ica@cell.embeddings,
+                     seu@reductions$tsne@cell.embeddings,
+                     seu@reductions$umap@cell.embeddings)
+
+cluster_cols <- grep("SCT_snn_res", names(seu@meta.data), value=T)
+all_dim <- data.frame(all_dim,
+                      seu@meta.data[, cluster_cols])
+
+```
+
+##DE Analysis of the clusters
+
+Find the markers for all the clusters in the first resolution.
+
+```{r echo=FALSE, include=FALSE}
+#' Set active identity
+Idents(seu) <- cluster_cols[1]  # "integrated_snn_res.0.1"
+
+cluster0.markers <- FindMarkers(seu, ident.1 = 0, min.pct = 0.25)
+cluster1.markers <- FindMarkers(seu, ident.1 = 1, min.pct = 0.25)
+cluster2.markers <- FindMarkers(seu, ident.1 = 2, min.pct = 0.25)
+cluster3.markers <- FindMarkers(seu, ident.1 = 3, min.pct = 0.25)
+cluster4.markers <- FindMarkers(seu, ident.1 = 4, min.pct = 0.25)
+```
+
+
+#Pathway Analysis
+
+```{r}
+#Cluster 0
+data.cluster0 <- bitr(rownames(cluster0.markers), fromType = "SYMBOL", toType = "ENTREZID", OrgDb="org.Hs.eg.db")
+
+pathway.0.GO <- enrichGO(data.cluster0$ENTREZID,'org.Hs.eg.db', pvalueCutoff = 0.01)
+
+dotplot(pathway.0.GO, x="GeneRatio",showCategory = 8, color='pvalue', font.size=6.5)
+```
+
+```{r}
+#Cluster 1
+data.cluster1 <- bitr(rownames(cluster1.markers), fromType = "SYMBOL", toType = "ENTREZID", OrgDb="org.Hs.eg.db")
+
+pathway.1.GO <- enrichGO(data.cluster1$ENTREZID,'org.Hs.eg.db', pvalueCutoff = 0.01)
+
+dotplot(pathway.1.GO,showCategory = 8, color='pvalue', font.size=6.5)
+```
+
+```{r}
+#Cluster 2
+data.cluster2 <- bitr(rownames(cluster2.markers), fromType = "SYMBOL", toType = "ENTREZID", OrgDb="org.Hs.eg.db")
+
+pathway.2.GO <- enrichGO(data.cluster2$ENTREZID,'org.Hs.eg.db', pvalueCutoff = 0.01)
+
+dotplot(pathway.2.GO, x="GeneRatio",showCategory = 8, color='pvalue', font.size=6.5)
+```
+
+```{r}
+#Cluster 3
+data.cluster3 <- bitr(rownames(cluster3.markers), fromType = "SYMBOL", toType = "ENTREZID", OrgDb="org.Hs.eg.db")
+
+pathway.3.GO <- enrichGO(data.cluster3$ENTREZID,'org.Hs.eg.db', pvalueCutoff = 0.01)
+
+dotplot(pathway.3.GO,showCategory = 8, color='pvalue', font.size=6.5)
+```
+
+```{r}
+#Cluster 4
+data.cluster4 <- bitr(rownames(cluster4.markers), fromType = "SYMBOL", toType = "ENTREZID", OrgDb="org.Hs.eg.db")
+
+pathway.4.GO <- enrichGO(data.cluster4$ENTREZID,'org.Hs.eg.db', pvalueCutoff = 0.01)
+
+dotplot(pathway.4.GO,showCategory = 8, color='pvalue', font.size=6.5)
+```
+
