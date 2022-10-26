@@ -1,5 +1,5 @@
 ---
-title: "Processing and analysis of placenta ST data"
+title: "Processing and analysis of placenta ST data: Main analysis with STUtility"
 author: "Nayanika Bhalla"
 date: '`r format(Sys.Date(), "%B %d, %Y")`'
 output: 
@@ -21,6 +21,13 @@ Data processing and analysis of spatial transcriptomics (second generation) data
 
 Description:
 
+Spatial Transcriptomics protocol was performed on 12 placental sections from 6 tissues using second generation chips with 2000 spots per array. The sectioning thickness of each section was 12µm and the permeabilization time using the enzyme pepsin (0.1% diluted in 0.1 M HCl) was optimised at 5 minutes.
+
+The paired end sequencing was performed using the NextSeq 500/550 (High-Output v2 kit, 75 cycles) platform (Illumina Inc., USA) in two batches.
+
+The fastq files sequencing output were processed with the STPipeline (version 1.7.2), which carried out trimming of the reads, barcode demultiplexing and mapping to the GRCh38-3.0.0 genome. The H&E-stained image of the tissue sections was further aligned with the spatial spot images via the tool ST Spot Detector. 
+
+Analysis of the Spaceranger output data was performed using [STUtility version 0.1.0](https://ludvigla.github.io/STUtility_web_site/index.html), which is a wrapper of the [Seurat version 4, (4.1.0)](https://satijalab.org/seurat/) R package. 
 
 #Initialise
 
