@@ -34,7 +34,7 @@ Analysis of the Spaceranger output data was performed using [STUtility version 0
 ```{r set_up}
 knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE, cache = FALSE, cache.lazy = FALSE, opts.label="kill_prefix")
 
-DIR_ROOT <- setwd("~/Desktop/placenta_project/210728_updated_data/")
+DIR_ROOT <- setwd("~/Desktop/placenta_project/")
 DIR_DATA <- file.path(DIR_ROOT, 'count_data')
 DIR_RES <- file.path(DIR_ROOT, 'results')
 DIR_SPOT <- file.path(DIR_ROOT, 'spot_data')
